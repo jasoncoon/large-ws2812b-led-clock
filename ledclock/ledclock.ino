@@ -38,19 +38,11 @@ CRGB leds[NUM_LEDS];
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
-// setting PWM properties
-const int freq = 5000;
-const int resolution = 8;
-
 bool off = false;
 uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
-uint8_t gHue = 160;                // rotating "base color" used by many of the patterns
-uint8_t gcnt = 0;
-uint8_t led_state = 0;     // status of the 3 LEDs in the mid (7 permutations out of 3 LEDs: R,G,B,RG,RB,GB,RGB)
-uint8_t duty_cycle = 0;    // duty cycle for PWM
-uint8_t led_dir = 0;       // fading direction for PWM
-uint8_t touch_counter = 0; // counter for touch button (long/short press detection)
-uint8_t sys_state = 0;     // state machine variable for different modes (LED only, clock, timer ...)
+uint8_t gHue = 0;                  // rotating "base color" used by many of the patterns
+uint8_t touch_counter = 0;         // counter for touch button (long/short press detection)
+uint8_t sys_state = 4;             // state machine variable for different modes (LED only, clock, timer ...)
 uint8_t hue = 0;
 bool touch_long_press = false;
 bool touch_short_press = false;
@@ -87,7 +79,7 @@ void addGlitter(fract8 chanceOfGlitter);
 void fadeall();
 void listDir(fs::FS &fs, const char *dirname, uint8_t levels);
 void plot_timer(uint16_t cnt);
-void rgb_pwm();
+void updateAnalogLeds();
 void set_time(uint8_t hour, uint8_t minute, uint8_t second);
 void setupWeb();
 
@@ -141,19 +133,23 @@ void setup()
   pinMode(BLUE_PIN, OUTPUT);
   pinMode(BUZZ_PIN, OUTPUT);
 
+  // setting PWM properties
+  const int freq = 5000;
+  const int resolution = 8;
+
   ledcSetup(0, freq, resolution);
   ledcSetup(1, freq, resolution);
   ledcSetup(2, freq, resolution);
   ledcAttachPin(RED_PIN, 0);
   ledcAttachPin(GREEN_PIN, 1);
   ledcAttachPin(BLUE_PIN, 2);
-  ledcWrite(0, 255);
-  ledcWrite(1, 255);
-  ledcWrite(2, 255);
+
+  // turn off the analog LEDs
+  updateAnalogLeds(CRGB::Black);
 
   touchAttachInterrupt(TOUCH_PIN, T0Activated, touch_threshold);
 
-  FastLED.addLeds<LED_TYPE, NP_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  FastLED.addLeds<LED_TYPE, NP_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalSMD5050);
   FastLED.setBrightness(BRIGHTNESS);
 
   Serial.println("Booting");
@@ -163,22 +159,24 @@ void setup()
 
   setupWeb();
 }
-int splitT;
+
 void loop()
 {
-  // Call the current pattern function once, updating the 'leds' array
   Portal.handleClient();
 #ifdef OTA
   ArduinoOTA.handle();
 #endif
 
+  int splitT;
+
   switch (sys_state)
   {
-  case 0:
+  case 0: // analog LEDs only, no ring
     FastLED.clear();
     FastLED.show();
     break;
-  case 1:
+
+  case 1: // clock
     if (transition)
     {
 
@@ -204,7 +202,8 @@ void loop()
     timeStamp = formattedDate.substring(splitT + 1, formattedDate.length());
     set_time(timeStamp.substring(0, 2).toInt(), timeStamp.substring(3, 5).toInt(), timeStamp.substring(6, 8).toInt());
     break;
-  case 2:
+
+  case 2: // timer
     if (transition)
     {
       loop_counter = 0;
@@ -263,7 +262,8 @@ void loop()
       // Serial.println(timer_cnt);
     }
     break;
-  case 3:
+
+  case 3: // animation
     if (transition)
     {
       loop_counter = 0;
@@ -280,6 +280,18 @@ void loop()
 
     loop_counter = (loop_counter + 1) % 60;
     break;
+
+  case 4: // solid color, same as the analog LEDs
+    if (transition)
+    {
+      loop_counter = 0;
+      transition = false;
+    }
+    fill_solid(leds, NUM_LEDS, CHSV(gHue, 255, 255));
+    FastLED.show();
+    loop_counter = (loop_counter + 1) % 60;
+    break;
+
   default:
     break;
   }
@@ -288,7 +300,7 @@ void loop()
   {
     sys_state++;
     transition = true;
-    if (sys_state == 4)
+    if (sys_state == 5)
       sys_state = 0;
     touch_long_press = false;
   }
@@ -313,35 +325,18 @@ void loop()
   {
     touch_counter = 0;
   }
-  FastLED.delay(50);
+
   // Serial.println(touch_counter);
 
-  // do some periodic updates
-  EVERY_N_MILLISECONDS(5)
-  {
-    gHue++;
-    if (led_dir == 0)
-    {
-      duty_cycle += 5;
-      if (duty_cycle == 250)
-      {
-        led_dir = 1;
-      }
-    }
-    else
-    {
-      duty_cycle -= 5;
-      if (duty_cycle == 0)
-      {
-        led_dir = 0;
-        led_state++;
-        if (led_state == 7)
-          led_state = 0;
-      }
-    }
-    rgb_pwm();
+  // update the LED ring
+  FastLED.delay(50);
 
-  } // slowly cycle the "base color" through the rainbow
+  // do some periodic updates
+  EVERY_N_MILLISECONDS(30)
+  {
+    gHue++; // slowly cycle the "base color" through the rainbow
+    updateAnalogLeds(CHSV(gHue, 255, 255));
+  }
 }
 
 void set_time(uint8_t hour, uint8_t minute, uint8_t second)
@@ -356,48 +351,11 @@ void set_time(uint8_t hour, uint8_t minute, uint8_t second)
   FastLED.show();
 }
 
-void rgb_pwm()
+void updateAnalogLeds(CRGB rgb)
 {
-  switch (led_state)
-  {
-  case 0: // red
-    ledcWrite(0, 255 - duty_cycle);
-    ledcWrite(1, 255);
-    ledcWrite(2, 255);
-    break;
-  case 1: // green
-    ledcWrite(0, 255);
-    ledcWrite(1, 255 - duty_cycle);
-    ledcWrite(2, 255);
-    break;
-  case 2: // blue
-    ledcWrite(0, 255);
-    ledcWrite(1, 255);
-    ledcWrite(2, 255 - duty_cycle);
-    break;
-  case 3: // red & green
-    ledcWrite(0, 255 - duty_cycle);
-    ledcWrite(1, 255 - duty_cycle);
-    ledcWrite(2, 255);
-    break;
-  case 4: // green & blue
-    ledcWrite(0, 255);
-    ledcWrite(1, 255 - duty_cycle);
-    ledcWrite(2, 255 - duty_cycle);
-    break;
-  case 5: // red & blue
-    ledcWrite(0, 255 - duty_cycle);
-    ledcWrite(1, 255);
-    ledcWrite(2, 255 - duty_cycle);
-    break;
-  case 6: // red, green & blue
-    ledcWrite(0, 255 - duty_cycle);
-    ledcWrite(1, 255 - duty_cycle);
-    ledcWrite(2, 255 - duty_cycle);
-    break;
-  default:
-    break;
-  }
+  ledcWrite(0, 255 - rgb.r);
+  ledcWrite(1, 255 - rgb.g);
+  ledcWrite(2, 255 - rgb.b);
 }
 
 void plot_timer(uint16_t cnt)
