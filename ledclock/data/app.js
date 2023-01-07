@@ -10,6 +10,10 @@ if (address.includes("localhost") || address.includes("127.0.0.1")) {
 
 document.addEventListener("DOMContentLoaded", onLoaded, false);
 
+let clockModeIndex;
+let patternModeIndex;
+
+// controls
 let form;
 
 let modeSelect;
@@ -37,6 +41,17 @@ let statusDiv;
 let statusFooter;
 let statusSpinner;
 
+// state
+let mode;
+let currentPaletteIndex;
+let cyclePalette;
+let paletteDuration;
+let currentPatternIndex;
+let cyclePattern;
+let patternDuration;
+let speed;
+let timeOffset;
+
 async function onLoaded() {
   statusDiv = document.getElementById("statusDiv");
   statusFooter = document.getElementById("statusFooter");
@@ -46,6 +61,14 @@ async function onLoaded() {
 
   modeSelect = document.getElementById("modeSelect");
   modeSelect.onchange = onModeChange;
+
+  for (let i = 0; i < modeSelect.options.length; i++) {
+    const option = modeSelect.options[i];
+    if (option.label === "Clock") clockModeIndex = i;
+    else if (option.label === "Pattern") patternModeIndex = i;
+  }
+
+  console.log({ clockModeIndex, patternModeIndex });
 
   // pattern controls
   patternSection = document.getElementById("patternSection");
@@ -98,38 +121,30 @@ async function onLoaded() {
 
   console.log({ data });
 
-  const {
-    mode,
-
-    currentPaletteIndex,
-    cyclePalette,
-    paletteDuration,
-
-    currentPatternIndex,
-    cyclePattern,
-    patternDuration,
-
-    speed,
-
-    timeOffset,
-  } = data;
-
-  modeSelect.value = mode;
-  updateModeDisplay(mode);
+  mode = data.mode;
+  currentPaletteIndex = data.currentPaletteIndex;
+  cyclePalette = data.cyclePalette;
+  paletteDuration = data.paletteDuration;
+  currentPatternIndex = data.currentPatternIndex;
+  cyclePattern = data.cyclePattern;
+  patternDuration = data.patternDuration;
+  speed = data.speed;
+  timeOffset = data.timeOffset;
 
   patternDurationInput.value = patternDuration;
   patternSelect.value = currentPatternIndex;
-  updateCyclePatternButtons(cyclePattern);
-  updatePatternDisplay(currentPatternIndex);
 
   paletteDurationInput.value = paletteDuration;
   paletteSelect.value = currentPaletteIndex;
-  updateCyclePaletteButtons(cyclePalette);
 
   speedInput.value = speed;
   speedInputRange.value = speed;
 
   timeOffsetInput.value = timeOffset / 60 / 60;
+
+  modeSelect.value = mode;
+
+  updateControls();
 
   form.style.display = "block";
   statusDiv.style.display = "none";
@@ -141,49 +156,37 @@ async function onLoaded() {
 }
 
 async function onModeChange(ev) {
-  const mode = ev.target.selectedIndex;
+  mode = ev.target.selectedIndex;
   postValue("Mode", "mode", mode);
-  updateModeDisplay(mode);
+  updateControls(mode);
 }
 
-function updateModeDisplay(mode) {
-  clockSection.style.display = mode === 1 ? "block" : "none";
-  patternSection.style.display = mode === 3 ? "block" : "none";
-}
+function updateControls() {
+  const pattern = patterns[currentPatternIndex];
 
-// pattern control event handlers
-function updateCyclePatternButtons(cyclePattern) {
+  const showClock = mode === clockModeIndex;
+  const showPattern = mode === patternModeIndex;
+  const showPalette = showPattern && pattern.palettes;
+  const showSpeed = showPattern && pattern.speed;
+
+  console.log({ showClock, showPattern, showPalette, showSpeed });
+
+  clockSection.style.display = showClock ? "block" : "none";
+
+  patternSection.style.display = showPattern ? "block" : "none";
+  paletteSection.style.display = showPalette ? "block" : "none";
+  speedSection.style.display = showSpeed ? "block" : "none";
+
+  speedInput.value = speed;
+  speedInputRange.value = speed;
+
   cyclePatternOffButton.className = cyclePattern
     ? "btn btn-outline-secondary"
     : "btn btn-primary";
   cyclePatternOnButton.className = cyclePattern
     ? "btn btn-primary"
     : "btn btn-outline-secondary";
-}
 
-async function onCyclePatternChange(cyclePattern) {
-  postValue("Cycle Pattern", "cyclePattern", cyclePattern ? 1 : 0);
-  updateCyclePatternButtons(cyclePattern);
-}
-
-async function onPatternDurationChange(ev) {
-  postValue("Pattern Duration", "patternDuration", ev.target.value);
-}
-
-async function onPatternChange(ev) {
-  const index = ev.target.selectedIndex;
-  postValue("Pattern", "currentPatternIndex", index);
-  updatePatternDisplay(index);
-}
-
-function updatePatternDisplay(index) {
-  const pattern = patterns[index];
-  paletteSection.style.display = pattern.palettes ? "block" : "none";
-  speedSection.style.display = pattern.speed ? "block" : "none";
-}
-
-// palette control event handlers
-function updateCyclePaletteButtons(cyclePalette) {
   cyclePaletteOffButton.className = cyclePalette
     ? "btn btn-outline-secondary"
     : "btn btn-primary";
@@ -192,9 +195,24 @@ function updateCyclePaletteButtons(cyclePalette) {
     : "btn btn-outline-secondary";
 }
 
+async function onCyclePatternChange(cyclePattern) {
+  postValue("Cycle Pattern", "cyclePattern", cyclePattern ? 1 : 0);
+  updateControls();
+}
+
+async function onPatternDurationChange(ev) {
+  postValue("Pattern Duration", "patternDuration", ev.target.value);
+}
+
+async function onPatternChange(ev) {
+  currentPatternIndex = ev.target.selectedIndex;
+  postValue("Pattern", "currentPatternIndex", currentPatternIndex);
+  updateControls();
+}
+
 async function onCyclePaletteChange(cyclePalette) {
   postValue("Cycle Palette", "cyclePalette", cyclePalette ? 1 : 0);
-  updateCyclePaletteButtons(cyclePalette);
+  updateControls(cyclePalette);
 }
 
 async function onPaletteDurationChange(ev) {
@@ -206,14 +224,9 @@ async function onPaletteChange(ev) {
 }
 
 async function onSpeedChange(ev) {
-  const speed = ev.target.value;
+  speed = ev.target.value;
   postValue("Speed", "speed", speed);
-  updateSpeedControls(speed);
-}
-
-function updateSpeedControls(speed) {
-  speedInput.value = speed;
-  speedInputRange.value = speed;
+  updateControls(speed);
 }
 
 async function onTimeOffsetChange(ev) {
